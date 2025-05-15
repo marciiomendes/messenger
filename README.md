@@ -1,5 +1,3 @@
-# messenger
-Mensageiro interno do GLPI
 # 💬 GLPI Messenger Plugin
 
 **GLPI Messenger** é um plugin de comunicação para o [GLPI](https://glpi-project.org), que permite troca de mensagens em tempo real entre usuários do sistema, com suporte a anexos, múltiplos chats simultâneos e persistência entre páginas.
@@ -17,4 +15,6 @@ Mensageiro interno do GLPI
 - ✅ Compatível com interfaces clássica e simplificada
 
 ---
+
+## 📁 Estrutura de Arquivos
 
