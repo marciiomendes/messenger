@@ -19,7 +19,8 @@
 ![image](https://github.com/user-attachments/assets/ffc0e966-5d55-4cf8-8851-678876f561a9)
 
 Alerta visual de novas mensagens ainda não respondidas.
-![image](https://github.com/user-attachments/assets/bc26bb38-5227-45d2-b192-548acf192a4b)
+
+![image](https://github.com/user-attachments/assets/471de2e7-4a9a-4cd6-b842-034c18e47923)
 
 
 
