@@ -46,13 +46,16 @@ class PluginMessengerMensagens extends CommonDBTM {
 			throw new Exception('Erro ao preparar a consulta SQL em getMessages.');
 		}
 
+		// Vincula os parâmetros
 		$stmt->bind_param('iiii', $sender_id, $receiver_id, $receiver_id, $sender_id);
 
+		// Executa a consulta
 		if (!$stmt->execute()) {
 			error_log('Erro ao executar a consulta SQL em getMessages: ' . $stmt->error);
 			throw new Exception('Erro ao executar a consulta SQL em getMessages.');
 		}
 
+		// Obtém os resultados
 		$result = $stmt->get_result();
 
 		if ($result === false) {
@@ -60,6 +63,7 @@ class PluginMessengerMensagens extends CommonDBTM {
 			throw new Exception('Erro ao obter resultados em getMessages.');
 		}
 
+		// Converte os resultados para array associativo
 		$messages = $result->fetch_all(MYSQLI_ASSOC);
 
 		$stmt->close();
@@ -139,6 +143,6 @@ class PluginMessengerMensagens extends CommonDBTM {
             throw new Exception('Erro ao executar a query de atualização.');
         }
 
-        return $stmt->affected_rows;
+        return $stmt->affected_rows; // Retorna o número de linhas afetadas
     }
 }

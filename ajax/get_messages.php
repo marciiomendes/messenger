@@ -4,17 +4,15 @@ include_once('../inc/messenger.class.php');
 
 global $DB, $CFG_GLPI;
 
-// Verifica se o usuário está logado
 if (!Session::getLoginUserID()) {
-    http_response_code(401); // Código HTTP para "Não autorizado"
+    http_response_code(401);
     header('Content-Type: application/json');
     echo json_encode(['status' => 'error', 'message' => 'Usuário não autenticado']);
     exit;
 }
 
-// Verifica se o parâmetro user_id foi enviado
 if (empty($_GET['user_id']) || !is_numeric($_GET['user_id'])) {
-    http_response_code(400); // Código HTTP para "Solicitação inválida"
+    http_response_code(400);
     header('Content-Type: application/json');
     echo json_encode(['status' => 'error', 'message' => 'Parâmetro user_id ausente ou inválido']);
     exit;

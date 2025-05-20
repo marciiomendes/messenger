@@ -1,5 +1,5 @@
 <?php
-define('PLUGIN_MESSENGER_VERSION', '1.0.1');
+define('PLUGIN_MESSENGER_VERSION', '1.0.2');
 
 if (!defined('GLPI_ROOT')) {
     define('GLPI_ROOT', rtrim(GLPI_URL, '/'));

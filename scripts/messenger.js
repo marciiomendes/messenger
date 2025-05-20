@@ -1,7 +1,7 @@
 const GLPI_URL = window.location.origin;
 
 let currentUserId = null;
-let pollingIntervals = {};
+let pollingInterval = null;
 let mensagensCache = new Set();
 let chatPositions = [];
 
@@ -21,29 +21,97 @@ async function obterCurrentUserId() {
     }
 }
 
-function iniciarPolling(userId) {
-    if (pollingIntervals[userId]) return;
+async function iniciarPollingGlobal() {
+    if (window.__pollingInterval__) return; // evitar múltiplas instâncias
 
-    pollingIntervals[userId] = setInterval(() => {
-        fetch(`${GLPI_URL}/plugins/messenger/ajax/check_new_messages.php?user_id=${userId}`, {
-            method: 'GET',
-            credentials: 'same-origin'
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success' && data.novas_mensagens.length > 0) {
-                    data.novas_mensagens.forEach(msg => {
-                        if (!mensagensCache[msg.id]) {
-                            mensagensCache[msg.id] = true;
-                            exibirMensagens(userId, [msg]);
+    window.__pollingInterval__ = setInterval(async () => {
+        try {
+            const response = await fetch(`${GLPI_URL}/plugins/messenger/ajax/check_new_messages.php?t=${Date.now()}`, {
+                method: 'GET',
+                credentials: 'same-origin'
+            });
+
+            const data = await response.json();
+            console.log('Resposta de check_new_messages:', data); // Log para depuração
+            if (data.status === 'success' && Array.isArray(data.novas_mensagens)) {
+                for (const msg of data.novas_mensagens) {
+                    if (!mensagensCache.has(msg.id)) {
+                        console.log(`Nova mensagem ID ${msg.id} adicionada ao cache`); // Log para rastrear cache
+                        mensagensCache.add(msg.id);
+
+                        const chatId = msg.sender_id;
+                        const chatPopup = document.getElementById(`chat-popup-${chatId}`);
+                        const chatsSalvos = JSON.parse(localStorage.getItem('chatsAbertos')) || [];
+                        const chat = chatsSalvos.find(c => c.userId == chatId);
+                        const estado = chat?.estado === 'minimized' ? 'minimized' : 'minimized'; // Força minimized
+
+                        // Abrir em estado minimized se não aberto
+                        if (!chatPopup) {
+                            await startChatPopup(chatId, msg.sender_name, estado, true);
                         }
-                    });
-                    marcarMensagemComoLida(userId);
+
+                        // Agora o DOM está pronto, podemos exibir a mensagem
+                        exibirMensagens(chatId, [msg]);
+
+                        const updatedPopup = document.getElementById(`chat-popup-${chatId}`);
+                        if (updatedPopup?.classList.contains('minimized')) {
+                            exibirAlertaChatMinimizado(chatId);
+                        }
+                    } else {
+                        console.log(`Mensagem ID ${msg.id} já está no cache, ignorando`); // Log para mensagens ignoradas
+                    }
                 }
-            })
-            .catch(error => console.error('Erro ao verificar novas mensagens:', error));
+            }
+        } catch (err) {
+            console.error("❌ Erro no polling de mensagens:", err);
+        }
     }, 1500);
 }
+
+window.sendMessage = async function (userId, messageOverride, skipSanitize = false) {
+    const messageInput = document.getElementById(`messageInput-${userId}`);
+    const message = messageOverride || messageInput.value.trim();
+    if (!message) return;
+
+    const historico = document.getElementById(`historico-${userId}`);
+    const timestamp = formatarDataHora(new Date().toISOString());
+    historico.innerHTML += `
+        <div class="mensagem sent-message">
+            <div class="message-content">
+                <strong>Você:</strong> ${message}
+            </div>
+            <div class="timestamp">${timestamp}</div>
+        </div>
+    `;
+    historico.scrollTop = historico.scrollHeight;
+    messageInput.value = '';
+
+    try {
+        const response = await fetch(`${GLPI_URL}/plugins/messenger/ajax/send_message.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sender_id: currentUserId,
+                receiver_id: userId,
+                message: message
+            }),
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (data.status === 'success') {
+            // Forçar verificação imediata de novas mensagens
+            console.log('Mensagem enviada com sucesso, forçando verificação de novas mensagens');
+            await fetch(`${GLPI_URL}/plugins/messenger/ajax/check_new_messages.php?t=${Date.now()}`, {
+                method: 'GET',
+                credentials: 'same-origin'
+            });
+        } else {
+            console.error('Erro ao enviar mensagem:', data.message);
+        }
+    } catch (error) {
+        console.error('Erro na requisição de envio:', error);
+    }
+};
 
 function sanitizeHTML(input) {
     const tempDiv = document.createElement('div');
@@ -62,7 +130,8 @@ function exibirMensagens(userId, mensagens) {
         if (document.getElementById(`message-${msg.id}`)) return;
 
         const isSentByCurrentUser = msg.sender_id === currentUserId;
-        const senderName = isSentByCurrentUser ? 'Você' : msg.sender_name;
+        const nomeFormatado = formatarNomeUsuario(msg.sender_name, msg.sender_id);
+		const senderName = isSentByCurrentUser ? 'Você' : nomeFormatado;
         const messageClass = isSentByCurrentUser ? 'sent-message' : 'received-message';
 
         historico.innerHTML += `
@@ -80,7 +149,6 @@ function exibirMensagens(userId, mensagens) {
     });
 
     historico.scrollTop = historico.scrollHeight;
-    atualizarContadorMensagens(userId, unreadCount);
 }
 
 function formatarDataHora(dataISO) {
@@ -120,69 +188,105 @@ function atualizarPosicoesChats() {
     });
 }
 
-window.startChatPopup = function (userId, userName = null, state = 'expanded') {
-    let existingChat = document.getElementById(`chat-popup-${userId}`);
+function formatarNomeUsuario(nome) {
+    if (!nome) return "Usuário";
 
-    if (!existingChat) {
-        if (!userName) {
-            fetch(`${GLPI_URL}/plugins/messenger/ajax/get_user_name.php?user_id=${userId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        window.startChatPopup(userId, data.name, state);
-                    } else {
-                        console.error('Erro ao obter nome do usuÃ¡rio:', data.message);
-                    }
-                })
-                .catch(error => console.error('Erro ao obter nome do usuÃ¡rio:', error));
+    const cacheKey = `nome_formatado_${nome}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) return cached;
+
+    const formatado = nome
+        .replace(/\./g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+        .split(' ')
+        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(' ');
+
+    localStorage.setItem(cacheKey, formatado);
+    return formatado;
+}
+
+function getNomeFormatadoDoCache(userId) {
+    const cache = JSON.parse(localStorage.getItem('chatUserNames') || '{}');
+    const entry = cache[userId];
+    if (!entry) return null;
+
+    const expirado = Date.now() - entry.timestamp > 86400000; // 24 horas
+    return expirado ? null : entry.nome;
+}
+
+window.startChatPopup = async function (userId, userName = null, state = 'expanded', forceOpen = false) {
+    const existingChat = document.getElementById(`chat-popup-${userId}`);
+    if (existingChat) return;
+
+    const chatsSalvos = JSON.parse(localStorage.getItem('chatsAbertos')) || [];
+    const chatSalvo = chatsSalvos.find(c => c.userId == userId);
+    const estadoAnterior = chatSalvo?.estado;
+
+    if (estadoAnterior === 'closed' && !forceOpen) {
+        console.log(`🔕 Chat com ${userId} está fechado manualmente. Ignorando reabertura.`);
+        return;
+    }
+
+    if (!userName) {
+        try {
+            const res = await fetch(`${GLPI_URL}/plugins/messenger/ajax/get_user_name.php?user_id=${userId}`);
+            const data = await res.json();
+            if (data.status === 'success') {
+                userName = data.name;
+            } else {
+                console.error('❌ Erro ao obter nome do usuário:', data.message);
+                return;
+            }
+        } catch (err) {
+            console.error('❌ Erro na requisição do nome do usuário:', err);
             return;
         }
-
-        if (typeof chatPositions === 'undefined') {
-            chatPositions = [];
-        }
-        const rightPosition = chatPositions.length * 310;
-        chatPositions.push(rightPosition);
-
-        const chatPopup = document.createElement('div');
-        chatPopup.id = `chat-popup-${userId}`;
-        chatPopup.className = `chat-popup ${state}`;
-        chatPopup.style.right = `${rightPosition}px`;
-        chatPopup.innerHTML = `
-            <div class="chat-header">
-                <span class="chat-title">${userName}</span>
-				<div class="chat-buttons">
-					<button class="toggle-chat" onclick="alternarEstadoChat(${userId})" title="Minimizar/Restaurar">&#8212;</button>
-					<button class="close-chat" onclick="fecharChat(${userId})" title="Fechar">X</button>
-				</div>
-            </div>
-            <div id="historico-${userId}" class="chat-historico"></div>
-            <div class="chat-footer">
-                <textarea id="messageInput-${userId}" placeholder="Digite sua mensagem"></textarea>
-				<input type="file" id="fileInput-${userId}" accept=".jpg,.jpeg,.png,.gif,.pdf,.docx,.xlsx,.txt" style="display: none;" />
-				<button class="send-button" onclick="sendMessage(${userId})">Enviar</button>
-				<button class="send-button" onclick="document.getElementById('fileInput-${userId}').click()">📎</button>
-
-            </div>
-        `;
-		
-        document.body.appendChild(chatPopup);
-        chatPositions.push(rightPosition);
-        obterMensagens(userId);
-        iniciarPolling(userId);
-		adicionarEventoEnter(userId);
     }
 
+    const rightPosition = chatPositions.length * 310;
+    chatPositions.push(rightPosition);
+
+    const chatPopup = document.createElement('div');
+    chatPopup.id = `chat-popup-${userId}`;
+    chatPopup.className = `chat-popup ${state}`;
+    chatPopup.style.right = `${rightPosition}px`;
+
+    chatPopup.innerHTML = `
+        <div class="chat-header">
+            <span class="chat-title">${formatarNomeUsuario(userName)}</span>
+            <div class="chat-buttons">
+                <button class="toggle-chat" onclick="alternarEstadoChat(${userId})" title="Minimizar/Restaurar">&#8212;</button>
+                <button class="close-chat" onclick="fecharChat(${userId})" title="Fechar">X</button>
+            </div>
+        </div>
+        <div id="historico-${userId}" class="chat-historico"></div>
+        <div class="chat-footer">
+            <textarea id="messageInput-${userId}" placeholder="Digite sua mensagem"></textarea>
+            <input type="file" id="fileInput-${userId}" accept=".jpg,.jpeg,.png,.gif,.pdf,.docx,.xlsx,.txt" style="display: none;" />
+            <button class="send-button" onclick="sendMessage(${userId})">Enviar</button>
+            <button class="send-button" onclick="document.getElementById('fileInput-${userId}').click()">📎</button>
+        </div>
+    `;
+
+    document.body.appendChild(chatPopup);
+
+    // Auto ajuste de altura do textarea
+    const textarea = chatPopup.querySelector(`#messageInput-${userId}`);
+    if (textarea) {
+        textarea.addEventListener('input', function () {
+            this.style.height = '40px';
+            this.style.height = this.scrollHeight + 'px';
+        });
+    }
+
+    await obterMensagens(userId);
+    adicionarEventoEnter(userId);
     atualizarPosicoesChats();
-	salvarEstadoChats();
+    salvarEstadoChats();
 };
-
-document.addEventListener('input', function (event) {
-    if (event.target.matches('textarea')) {
-        event.target.style.height = '40px';
-        event.target.style.height = event.target.scrollHeight + 'px';
-    }
-});
 
 function obterMensagens(userId) {
     fetch(`${GLPI_URL}/plugins/messenger/ajax/get_messages.php?user_id=${userId}`)
@@ -200,40 +304,6 @@ function obterMensagens(userId) {
             }
         })
         .catch(error => console.error('Erro ao obter mensagens:', error));
-}
-
-function alternarEstadoChat(userId) {
-    const chatPopup = document.getElementById(`chat-popup-${userId}`);
-    if (!chatPopup) return;
-
-    const isMinimized = chatPopup.classList.contains('minimized');
-    
-    if (isMinimized) {
-        chatPopup.classList.remove('minimized');
-        chatPopup.querySelector('.toggle-chat').innerHTML = '&#8212;';
-        chatPopup.querySelector('.toggle-chat').setAttribute('title', 'Minimizar');
-        atualizarContadorMensagens(userId, 0);
-        marcarMensagemComoLida(userId);
-    } else {
-        chatPopup.classList.add('minimized');
-        chatPopup.querySelector('.toggle-chat').innerHTML = '&#9633;';
-        chatPopup.querySelector('.toggle-chat').setAttribute('title', 'Restaurar');
-    }
-
-    salvarEstadoChats(userId, chatPopup.querySelector('.chat-title').innerText, isMinimized ? 'expanded' : 'minimized');
-}
-
-// Salva estado dos chats
-function salvarEstadoChats() {
-    const chatsAbertos = [];
-    document.querySelectorAll('.chat-popup').forEach(chat => {
-        const userId = chat.id.split('-')[2];
-        const estado = chat.classList.contains('minimized') ? 'minimized' : 'expanded';
-        const userName = chat.querySelector('.chat-title')?.innerText || 'Usuário';
-
-        chatsAbertos.push({ userId, userName, estado });
-    });
-    localStorage.setItem('chatsAbertos', JSON.stringify(chatsAbertos));
 }
 
 window.sendMessage = async function (userId, messageOverride, skipSanitize = false) {
@@ -276,7 +346,7 @@ window.sendMessage = async function (userId, messageOverride, skipSanitize = fal
                 console.error('Erro ao enviar mensagem:', data.message);
             }
         })
-        .catch(error => console.error('Erro na requisiÃ§Ã£o de envio:', error));
+        .catch(error => console.error('Erro na requisição de envio:', error));
 };
 
 document.addEventListener('change', function (event) {
@@ -305,7 +375,7 @@ document.addEventListener('change', function (event) {
             const link = `${GLPI_URL}/plugins/messenger/download.php?f=${encodeURIComponent(data.filename)}`;
             const msg = `<a href="${link}" target="_blank">📎 ${file.name}</a>`;
 
-            sendMessage(userId, msg, true); // true = já formatado
+            sendMessage(userId, msg, true);
         } else {
             alert("Erro ao enviar o arquivo: " + data.message);
         }
@@ -316,17 +386,14 @@ document.addEventListener('change', function (event) {
     });
 });
 
-
-function processarNovaMensagem(msg) {
-    const userId = msg.sender_id; 
+async function processarNovaMensagem(msg) {
+    const userId = msg.sender_id;
 
     console.log(`📩 Nova mensagem recebida de ${msg.sender_name} (ID: ${userId})`);
 
     let chatPopup = document.getElementById(`chat-popup-${userId}`);
-
     if (!chatPopup) {
-        console.log(`🆕 Criando chat para ${msg.sender_name}...`);
-        startChatPopup(userId, msg.sender_name, 'expanded');
+        await startChatPopup(userId, msg.sender_name, 'minimized', true);
     }
 
     exibirMensagens(userId, [msg]);
@@ -335,6 +402,90 @@ function processarNovaMensagem(msg) {
     if (chatPopup && chatPopup.classList.contains('minimized')) {
         exibirAlertaChatMinimizado(userId);
     }
+}
+
+async function marcarMensagensComoLidas(userId) {
+    try {
+        // Obter token CSRF
+        let csrfToken = document.querySelector('meta[name="glpi_csrf_token"]')?.content || window.glpi_csrf_token || '';
+        if (!csrfToken) {
+            console.log('Token CSRF não encontrado, tentando obter do servidor');
+            const response = await fetch(`${GLPI_URL}/ajax/common.php`, {
+                method: 'GET',
+                credentials: 'same-origin'
+            });
+            const data = await response.json();
+            csrfToken = data.csrf_token || '';
+            console.log('Token CSRF obtido:', csrfToken);
+        }
+
+        console.log(`Enviando requisição para marcar mensagens como lidas: user_id=${userId}, _glpi_uid=${currentUserId}, csrf_token=${csrfToken}`);
+
+        const response = await fetch(`${GLPI_URL}/plugins/messenger/ajax/mark_messages_read.php`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Glpi-Csrf-Token': csrfToken,
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                user_id: userId,
+                _glpi_uid: currentUserId
+            }),
+            credentials: 'same-origin'
+        });
+
+        console.log('Cabeçalhos enviados:', Object.fromEntries(response.headers.entries()));
+        console.log('Status da resposta:', response.status, response.statusText);
+
+        const data = await response.json();
+        if (data.status !== 'success') {
+            console.error('Erro ao marcar mensagens como lidas:', data.message, 'Status:', response.status);
+        } else {
+            console.log(`Mensagens do usuário ${userId} marcadas como lidas`);
+        }
+    } catch (error) {
+        console.error('Erro na requisição para marcar mensagens como lidas:', error);
+    }
+}
+
+function alternarEstadoChat(userId) {
+    const chatPopup = document.getElementById(`chat-popup-${userId}`);
+    if (!chatPopup) return;
+
+    const titleEl = chatPopup.querySelector('.chat-title');
+    const isMinimized = chatPopup.classList.contains('minimized');
+
+    if (isMinimized) {
+        // Expandindo o chat: remover sino, marcar mensagens como lidas
+        chatPopup.classList.remove('minimized');
+        chatPopup.classList.remove('has-new-message');
+        if (titleEl) titleEl.querySelector('.sino-alerta')?.remove();
+        marcarMensagensComoLidas(userId); // Marcar mensagens como lidas
+    } else {
+        // Minimizando o chat
+        chatPopup.classList.add('minimized');
+    }
+
+    salvarEstadoChats();
+}
+
+function salvarEstadoChats() {
+    const chatsAbertos = [];
+    document.querySelectorAll('.chat-popup').forEach(chat => {
+        const userId = chat.id.split('-')[2];
+        const estado = chat.classList.contains('minimized') ? 'minimized' : 'expanded';
+        chatsAbertos.push({ userId, estado });
+    });
+
+    const chatsFechados = JSON.parse(localStorage.getItem('chatsAbertos')) || [];
+    chatsFechados.forEach(chat => {
+        if (!chatsAbertos.find(c => c.userId === chat.userId)) {
+            chatsAbertos.push({ userId: chat.userId, estado: 'closed' });
+        }
+    });
+
+    localStorage.setItem('chatsAbertos', JSON.stringify(chatsAbertos));
 }
 
 function minimizarChat(userId) {
@@ -352,104 +503,48 @@ function minimizarChat(userId) {
     }
 }
 
-// Fechar chat
-function fecharChat(userId) {
-    const chatPopup = document.getElementById(`chat-popup-${userId}`);
-    if (chatPopup) {
-        chatPopup.remove();
-        chatPositions.pop();
-        salvarEstadoChats();
-    }
-}
-
 function restaurarChats() {
     const chatsAbertos = JSON.parse(localStorage.getItem('chatsAbertos')) || [];
     chatsAbertos.forEach(chat => {
-        if (chat.estado === 'minimized' || chat.estado === 'expanded') {
-            startChatPopup(chat.userId, chat.userName || "Usuário", chat.estado);
+        if (chat.estado !== 'closed') {
+            startChatPopup(chat.userId, null, chat.estado);
         }
     });
+}
+
+function fecharChat(userId) {
+    const chatPopup = document.getElementById(`chat-popup-${userId}`);
+    if (chatPopup) {
+        // Remover sino e classe ao fechar o chat
+        chatPopup.classList.remove('has-new-message');
+        const titleEl = chatPopup.querySelector('.chat-title');
+        if (titleEl) titleEl.querySelector('.sino-alerta')?.remove();
+        
+        chatPopup.remove();
+        let chatsAbertos = JSON.parse(localStorage.getItem('chatsAbertos')) || [];
+        const chatIndex = chatsAbertos.findIndex(chat => chat.userId == userId);
+        if (chatIndex >= 0) {
+            chatsAbertos[chatIndex].estado = 'closed';
+        } else {
+            chatsAbertos.push({ userId, estado: 'closed' });
+        }
+        localStorage.setItem('chatsAbertos', JSON.stringify(chatsAbertos));
+    }
 }
 
 function exibirAlertaChatMinimizado(userId) {
     const chatPopup = document.getElementById(`chat-popup-${userId}`);
     if (chatPopup && chatPopup.classList.contains('minimized')) {
         chatPopup.classList.add('has-new-message');
-    }
-}
-
-function verificarNovasMensagens() {
-    fetch(`${GLPI_URL}/plugins/messenger/ajax/check_new_messages.php`, {
-        method: 'GET',
-        credentials: 'same-origin'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success' && data.novas_mensagens.length > 0) {
-            data.novas_mensagens.forEach(novaMensagem => {
-                const userId = novaMensagem.sender_id;
-
-                if (!document.getElementById(`chat-popup-${userId}`)) {
-                    startChatPopup(userId, novaMensagem.sender_name, 'minimized');
-                }
-
-                exibirMensagens(userId, [novaMensagem]);
-
-                marcarMensagemComoLida(userId);
-            });
+        const title = chatPopup.querySelector('.chat-title');
+        if (!title.querySelector('.sino-alerta')) {
+            const sino = document.createElement('span');
+            sino.classList.add('sino-alerta');
+            sino.innerHTML = '🔔';
+            title.appendChild(sino);
         }
-    })
-    .catch(error => console.error('Erro ao verificar novas mensagens:', error));
-}
-
-function atualizarTituloComMensagensNaoLidas() {
-    const totalNaoLidas = Object.values(pollingIntervals).reduce((acc, value) => acc + value.novasMensagens || 0, 0);
-    document.title = totalNaoLidas > 0 ? `(${totalNaoLidas}) GLPI Chat` : 'GLPI Chat';
-}
-
-function marcarMensagemComoLida(userId) {
-    const chatPopup = document.getElementById(`chat-popup-${userId}`);
-
-    if (!chatPopup || chatPopup.classList.contains('minimized')) {
-        console.log(`Chat com ${userId} estÃ¡ minimizado. Mensagens nÃ£o serÃ£o marcadas como lidas.`);
-        return;
-    }
-
-    if (!currentUserId || !userId) {
-        console.error('ParÃ¢metros ausentes ao marcar mensagens como lidas.', {
-            receiver_id: currentUserId,
-            sender_id: userId
-        });
-        return;
-    }
-
-  }
-
-function atualizarContadorMensagens(userId, unreadCount) {
-    const chatHeader = document.querySelector(`#chat-popup-${userId} .chat-title`);
-    if (!chatHeader) return;
-
-    let notificationBadge = chatHeader.querySelector('.notification-badge');
-
-    if (!notificationBadge && unreadCount > 0) {
-        notificationBadge = document.createElement('span');
-        notificationBadge.classList.add('notification-badge');
-        chatHeader.appendChild(notificationBadge);
-    }
-
-    if (notificationBadge) {
-        notificationBadge.textContent = unreadCount;
-        notificationBadge.style.display = unreadCount > 0 ? 'inline-block' : 'none';
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-    obterCurrentUserId().then(() => {
-        restaurarChats();
-        iniciarPolling();
-		setInterval(verificarNovasMensagens, 1500);
-    });
-});
 
 window.adicionarIconeChat = function () {
     fetch('/plugins/messenger/ajax/get_user_list.php')
@@ -457,26 +552,28 @@ window.adicionarIconeChat = function () {
         .then(data => {
             if (data.status !== 'success') return;
 
-            document.querySelectorAll('.actor_entry[data-itemtype="User"]')
+            document.querySelectorAll('.actor_entry[data-itemtype="User"], .user-info-card h4.card-title')
 				.forEach(userElement => {
-					const itemType = userElement.getAttribute('data-itemtype');
-					const userId = userElement.getAttribute('data-items-id');
+					let userId = userElement.dataset.itemsId || userElement.querySelector('a')?.href.match(/(\d+)$/)?.[0];
+					if (!userId || userElement.querySelector('.chat-icon')) return;
 
-					if (itemType !== 'User' || !userId || userElement.querySelector('.chat-icon')) return;
+					const foundUser = data.users.find(user => user.id == userId);
+					if (!foundUser) return;
+	
+					const chatIcon = document.createElement('a');
+					chatIcon.href = "#";
+					chatIcon.classList.add('chat-icon', 'ms-2');
+					chatIcon.title = `Iniciar chat com ${foundUser.name}`;
+					chatIcon.innerHTML = '<i class="fas fa-comments"></i>';
 
-                    if (!userId || userElement.querySelector('.chat-icon')) return;
+					chatIcon.addEventListener('click', event => {
+						event.preventDefault();
+						startChatPopup(userId, foundUser.name, 'expanded', true);
+					});
 
-                    const chatIcon = document.createElement('a');
-                    chatIcon.href = "#";
-                    chatIcon.classList.add('chat-icon', 'ms-2');
-                    chatIcon.innerHTML = '<i class="fas fa-comments"></i>';
-                    chatIcon.addEventListener('click', event => {
-                        event.preventDefault();
-                        startChatPopup(userId, data.users.find(u => u.id == userId)?.name || "Usuário");
-                    });
+					userElement.appendChild(chatIcon);
+				});
 
-                    userElement.appendChild(chatIcon);
-                });
         })
         .catch(error => console.error("❌ Erro ao buscar usuários para o chat:", error));
 };
@@ -508,6 +605,9 @@ function exibirNotificacaoMensagem(senderName, message) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("🚀 Página carregada! Adicionando ícones de chat...");
-    adicionarIconeChat();
+    obterCurrentUserId().then(() => {
+        restaurarChats();
+        iniciarPollingGlobal();
+		adicionarIconeChat();
+    });
 });

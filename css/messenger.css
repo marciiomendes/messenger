@@ -31,6 +31,21 @@
     animation: slideIn 0.4s ease;
 }
 
+.sino-alerta {
+    margin-left: 5px;
+    font-size: 14px;
+    color: gold;
+    animation: ring 1s infinite;
+}
+
+@keyframes ring {
+    0% { transform: rotate(0); }
+    25% { transform: rotate(-10deg); }
+    50% { transform: rotate(10deg); }
+    75% { transform: rotate(-5deg); }
+    100% { transform: rotate(0); }
+}
+
 @keyframes slideIn {
     from {
         transform: translateY(50px);
@@ -191,17 +206,10 @@
     100% { box-shadow: 0 0 5px var(--notification-color); }
 }
 
-/* 🛑 Ícone de Notificação */
-.notification-badge {
-    background-color: var(--notification-color);
-    color: white;
-    font-size: 12px;
-    font-weight: bold;
-    border-radius: 50%;
-    padding: 4px 8px;
-    display: inline-block;
-    min-width: 22px;
-    text-align: center;
+.sino-alerta {
+    color: red;
+    margin-left: 6px;
+    animation: pulse 1s infinite alternate;
 }
 
 /* 💬 Ícone do Chat */
