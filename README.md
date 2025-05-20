@@ -18,9 +18,15 @@
  Abaixo ícone para início de chat com envolvidos nos tickets.
 ![image](https://github.com/user-attachments/assets/ffc0e966-5d55-4cf8-8851-678876f561a9)
 
+
 Alerta visual de novas mensagens ainda não respondidas.
 
 ![image](https://github.com/user-attachments/assets/471de2e7-4a9a-4cd6-b842-034c18e47923)
+
+
+Chat de conversa entre usuários.
+![image](https://github.com/user-attachments/assets/86de6c49-6429-4979-a498-4ac0cba3d30f)
+
 
 
 
