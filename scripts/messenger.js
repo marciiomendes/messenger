@@ -404,48 +404,26 @@ async function processarNovaMensagem(msg) {
     }
 }
 
-async function marcarMensagensComoLidas(userId) {
+async function marcarMensagensComoLidas(senderId) {
     try {
-        // Obter token CSRF
-        let csrfToken = document.querySelector('meta[name="glpi_csrf_token"]')?.content || window.glpi_csrf_token || '';
-        if (!csrfToken) {
-            console.log('Token CSRF não encontrado, tentando obter do servidor');
-            const response = await fetch(`${GLPI_URL}/ajax/common.php`, {
-                method: 'GET',
-                credentials: 'same-origin'
-            });
-            const data = await response.json();
-            csrfToken = data.csrf_token || '';
-            console.log('Token CSRF obtido:', csrfToken);
-        }
-
-        console.log(`Enviando requisição para marcar mensagens como lidas: user_id=${userId}, _glpi_uid=${currentUserId}, csrf_token=${csrfToken}`);
-
         const response = await fetch(`${GLPI_URL}/plugins/messenger/ajax/mark_messages_read.php`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Glpi-Csrf-Token': csrfToken,
-                'Accept': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({
-                user_id: userId,
-                _glpi_uid: currentUserId
-            }),
-            credentials: 'same-origin'
+                user_id: senderId,
+                _glpi_uid: currentUserId // garante autenticação mesmo sem sessão
+            })
         });
 
-        console.log('Cabeçalhos enviados:', Object.fromEntries(response.headers.entries()));
-        console.log('Status da resposta:', response.status, response.statusText);
-
-        const data = await response.json();
-        if (data.status !== 'success') {
-            console.error('Erro ao marcar mensagens como lidas:', data.message, 'Status:', response.status);
+        const result = await response.json();
+        if (result.status === 'success') {
+            console.log(`📩 Mensagens de ${senderId} marcadas como lidas.`);
         } else {
-            console.log(`Mensagens do usuário ${userId} marcadas como lidas`);
+            console.warn(`⚠️ Falha ao marcar mensagens como lidas: ${result.message}`);
         }
     } catch (error) {
-        console.error('Erro na requisição para marcar mensagens como lidas:', error);
+        console.error('❌ Erro na requisição para marcar mensagens como lidas:', error);
     }
 }
 

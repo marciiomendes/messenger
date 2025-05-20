@@ -1,47 +1,61 @@
 <?php
+ob_start();
+session_start();
 include('../../../inc/includes.php');
+ob_end_clean();
 
 header('Content-Type: application/json');
 
-// Verifica se o usuário está logado
-if (!Session::getLoginUserID()) {
-    echo json_encode(['status' => 'error', 'message' => 'Usuário não autenticado']);
-    exit;
+try {
+    // Log da sessão
+    error_log("mark_messages_read.php: Session ID: " . (session_id() ?: 'Nenhuma sessão'));
+    error_log("mark_messages_read.php: Cookies: " . json_encode($_COOKIE));
+
+    $rawInput = file_get_contents('php://input');
+    error_log("mark_messages_read.php: Raw JSON: " . $rawInput);
+
+    $input = json_decode($rawInput, true);
+
+    if (!isset($input['user_id']) || !is_numeric($input['user_id'])) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Parâmetro user_id ausente ou inválido']);
+        exit;
+    }
+
+    $receiver_id = isset($input['_glpi_uid']) && is_numeric($input['_glpi_uid']) ? (int)$input['_glpi_uid'] : null;
+
+    if (!$receiver_id) {
+        http_response_code(401);
+        echo json_encode(['status' => 'error', 'message' => 'Usuário não autenticado']);
+        exit;
+    }
+
+    $sender_id = (int)$input['user_id'];
+
+    global $DB;
+
+    error_log("mark_messages_read.php: receiver_id = $receiver_id, sender_id = $sender_id");
+
+    $query = "UPDATE glpi_plugin_messenger SET is_read = 1 WHERE receiver_id = ? AND sender_id = ? AND is_read = 0";
+    $stmt = $DB->prepare($query);
+
+    if (!$stmt) {
+        throw new Exception("Erro ao preparar consulta: " . $DB->error);
+    }
+
+    $stmt->bind_param('ii', $receiver_id, $sender_id);
+
+    if ($stmt->execute()) {
+        echo json_encode(['status' => 'success', 'message' => 'Mensagens marcadas como lidas']);
+    } else {
+        throw new Exception('Erro ao atualizar mensagens');
+    }
+
+    $stmt->close();
+} catch (Exception $e) {
+    error_log("mark_messages_read.php: ERRO FATAL: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
 }
 
-// Obtém os dados enviados via POST
-$data = json_decode(file_get_contents('php://input'), true);
-
-if (empty($data['receiver_id']) || empty($data['sender_id'])) {
-    echo json_encode(['status' => 'error', 'message' => 'Parâmetros ausentes']);
-    exit;
-}
-
-$receiver_id = (int) $data['receiver_id'];
-$sender_id = (int) $data['sender_id'];
-
-global $DB;
-
-// Atualiza as mensagens para marcá-las como lidas
-$query = "
-    UPDATE glpi_plugin_messenger
-    SET is_read = 1
-    WHERE receiver_id = ? AND sender_id = ? AND is_read = 0
-";
-$stmt = $DB->prepare($query);
-
-if ($stmt === false) {
-    error_log('Erro ao preparar a consulta SQL: ' . $DB->error());
-    echo json_encode(['status' => 'error', 'message' => 'Erro ao preparar a consulta']);
-    exit;
-}
-
-$stmt->bind_param('ii', $receiver_id, $sender_id);
-
-if ($stmt->execute()) {
-    echo json_encode(['status' => 'success', 'message' => 'Mensagens marcadas como lidas']);
-} else {
-    error_log('Erro ao executar a consulta SQL: ' . $stmt->error);
-    echo json_encode(['status' => 'error', 'message' => 'Erro ao executar a consulta']);
-}
-$stmt->close();
+exit;
