@@ -1,13 +1,3 @@
-/**
- * Messenger Plugin para GLPI - UI Estilo Telegram com Persistência
- *
- * Este script cria uma janela de chat única que persiste a lista de conversas
- * e o estado do popup. Inclui um sistema de notificação robusto e uma
- * sinalização visual no cabeçalho quando minimizado com novas mensagens.
- *
- * Autor: Márcio Mendes (Lógica Original), Refatorado por IA (Nova UI e Persistência)
- * Versão: 2.6
- */
 
 document.addEventListener('DOMContentLoaded', () => {
 
