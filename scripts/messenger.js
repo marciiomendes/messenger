@@ -1,3 +1,13 @@
+/**
+ * Messenger Plugin para GLPI - UI Estilo Telegram com Persistência
+ *
+ * Este script cria uma janela de chat única que persiste a lista de conversas
+ * e o estado do popup. Inclui um sistema de notificação robusto e uma
+ * sinalização visual no cabeçalho quando minimizado com novas mensagens.
+ *
+ * Autor: Márcio Mendes (Lógica Original), Refatorado por IA (Nova UI e Persistência)
+ * Versão: 2.9
+ */
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -49,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const chatCSS = `
             @keyframes header-flash { 50% { background-color: #639cd4; } }
-            :root { --tg-primary: #5288c1; --tg-header-height: 48px; --tg-chat-bg: #e5ddd5; --tg-white: #fff; --tg-border: #f0f0f0; --tg-sent-bubble: #dcf8c6; --tg-unread-bg: #f5f7fa; }
+            :root { --tg-primary: #5288c1; --tg-header-height: 48px; --tg-chat-bg: #ECE5DD; --tg-white: #fff; --tg-border: #f0f0f0; --tg-sent-bubble: #dcf8c6; --tg-unread-bg: #f5f7fa; }
             .chat-container { position: fixed; bottom: 0; left: 20px; width: 370px; height: 550px; background-color: var(--tg-white); border-radius: 10px 10px 0 0; box-shadow: 0 5px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; transition: all 0.3s ease; overflow: hidden; z-index: 9998; }
             .chat-container.maximized { width: 90vw; height: 90vh; left: 5vw; bottom: 0; }
             .chat-container.closed { transform: translateY(110%); box-shadow: none; }
@@ -63,7 +73,11 @@ document.addEventListener('DOMContentLoaded', () => {
             .chat-body { flex-grow: 1; position: relative; overflow: hidden; }
             .view { position: absolute; width: 100%; height: 100%; transition: transform 0.3s ease-in-out; background-color: var(--tg-white); display: flex; flex-direction: column; }
             .view:not(.active) { transform: translateX(-100%); }
-            #message-window-view { transform: translateX(100%); }
+            #message-window-view { 
+                transform: translateX(100%);
+                /* A MÁGICA ACONTECE AQUI: A "JANELA" INTEIRA GANHA A COR DE FUNDO */
+                background-color: var(--tg-chat-bg);
+            }
             #message-window-view.active { transform: translateX(0); }
             #conversation-list-items { overflow-y: auto; flex-grow: 1; }
             .conversation-item { display: flex; align-items: center; padding: 12px 15px; cursor: pointer; border-bottom: 1px solid var(--tg-border); position: relative; }
@@ -76,16 +90,23 @@ document.addEventListener('DOMContentLoaded', () => {
             .conversation-header span { font-size: 12px; color: #888; }
             .last-message { margin: 4px 0 0; font-size: 14px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .unread-badge { background-color: var(--tg-primary); color: white; border-radius: 12px; padding: 2px 8px; font-size: 11px; position: absolute; right: 15px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; }
-            .message-header { display: flex; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--tg-border); background: #f9f9f9; }
+            .message-header { display: flex; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--tg-border); background: var(--tg-white); /* Cabeçalho branco sobre o fundo */ }
             .message-header button { background: none; border: none; font-size: 18px; margin-right: 15px; cursor: pointer; color: #555; }
             #active-chat-username { font-size: 16px; font-weight: bold; }
-            .message-area { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: var(--tg-chat-bg); display: flex; flex-direction: column; }
+            .message-area { 
+                flex-grow: 1; 
+                padding: 15px; 
+                overflow-y: auto; 
+                display: flex; 
+                flex-direction: column;
+                /* A ÁREA DE MENSAGEM AGORA NÃO PRECISA DE COR DE FUNDO, ELA É TRANSPARENTE */
+            }
             .message { padding: 8px 12px; border-radius: 18px; max-width: 75%; margin-bottom: 10px; line-height: 1.4; word-wrap: break-word; }
             .message strong { display: block; margin-bottom: 4px; color: var(--tg-primary); font-size: 13px; }
             .message .timestamp { font-size: 11px; color: #999; text-align: right; margin-top: 5px; }
             .message.sent { background-color: var(--tg-sent-bubble); align-self: flex-end; }
             .message.received { background-color: var(--tg-white); align-self: flex-start; }
-            .message-input-area { display: flex; padding: 10px; border-top: 1px solid var(--tg-border); align-items: flex-end; }
+            .message-input-area { display: flex; padding: 10px; border-top: 1px solid var(--tg-border); align-items: flex-end; background: var(--tg-white); /* Input branco sobre o fundo */ }
             #message-input { flex-grow: 1; border: 1px solid #ccc; border-radius: 20px; padding: 10px 15px; outline: none; resize: none; max-height: 100px; font-size: 14px; }
             .message-input-area button { background: var(--tg-primary); border: none; color: white; border-radius: 50%; width: 40px; height: 40px; margin-left: 10px; cursor: pointer; font-size: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
             .attachment-btn { background-color: transparent !important; color: #555 !important; }
